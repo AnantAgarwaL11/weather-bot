@@ -1,0 +1,24 @@
+# Malformed: SOP missing severity/response, unknown metric, bad operator.
+version: "1.0"
+activities:
+  cycling: {label: cycling, synonyms: [cycle]}
+groups: {}
+policies:
+  - id: BAD-001
+    name: Missing severity and response
+    category: travel
+    description: incomplete policy
+    conditions:
+      activities: [cycling]
+      all:
+        - {metric: wind_gust_max, op: gte, value: 40}
+  - id: BAD-002
+    name: Unknown metric
+    category: travel
+    description: references a metric the weather client does not provide
+    severity: high
+    conditions:
+      activities: [cycling]
+      all:
+        - {metric: pollen_count, op: approx, value: 3}
+    response: {verdict: avoid, summary: Avoid it entirely., guidance: [Stay home.]}

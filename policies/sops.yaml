@@ -1,0 +1,474 @@
+# Weather-advisory Standard Operating Procedures (SOPs).
+#
+# This file is the ONLY source of safety recommendations. The application never
+# invents advice: it evaluates these conditions deterministically against live
+# weather data and quotes the selected SOP.
+#
+# Metrics available to conditions (aggregated over the requested time window):
+#   temp_max, temp_min, apparent_temp_max, apparent_temp_min   (°C)
+#   wind_speed_max, wind_gust_max                              (km/h)
+#   precip_prob_max                                            (%)
+#   precip_sum                                                 (mm)
+#   uv_index_max                                               (index)
+#   humidity_max                                               (%)
+#   thunderstorm                                               (bool, WMO codes 95/96/99)
+# Operators: gt, gte, lt, lte, eq
+# Severity order: info < low < moderate < high < critical
+# Conflict resolution: highest severity wins, then higher priority, then more
+# specific (activity/group-scoped) policy, then SOP id.
+
+version: "1.0"
+
+# Supported activities. Synonyms feed the deterministic intent interpreter; the
+# LLM interpreter (if configured) may only return one of these keys.
+activities:
+  cycling:
+    label: cycling / two-wheeler riding
+    synonyms: [cycle, cycling, bicycle, bike, biking, cyclist, ride, riding, two-wheeler, two wheeler, scooter, scooty, motorbike, motorcycle, moped, bike ride, pedal]
+  running:
+    label: running / outdoor exercise
+    synonyms: [run, running, jog, jogging, workout, exercise, training, marathon, sprint, outdoor exercise, fitness, yoga outside, gym outside]
+  walking:
+    label: walking
+    synonyms: [walk, walking, stroll, morning walk, evening walk, dog walk, walk the dog]
+  hiking:
+    label: hiking / trekking
+    synonyms: [hike, hiking, trek, trekking, trail, mountain walk, climb]
+  picnic:
+    label: picnic / outdoor leisure
+    synonyms: [picnic, barbecue, bbq, outdoor lunch, day out, outing, beach day, lunch outside, family outing]
+  park_visit:
+    label: park or playground visit
+    synonyms: [park, playground, garden, play outside, playing outside, zoo]
+  travel:
+    label: travel / commuting by road
+    synonyms: [travel, travelling, traveling, drive, driving, car, road trip, journey, commute, commuting, trip, bus, taxi, cab]
+  general_outdoor:
+    label: general outdoor activity
+    synonyms: [go out, going out, outside, outdoors, outdoor, step out, head out, errands, shopping]
+
+# User context groups that narrow policies (e.g. vulnerable people).
+groups:
+  children:
+    label: children
+    synonyms: [child, children, kid, kids, son, daughter, toddler, baby, babies, infant, my little one, grandchildren, students]
+  elderly:
+    label: elderly people
+    synonyms: [elderly, senior, seniors, old parents, aged, grandma, grandpa, grandmother, grandfather, grandparents, old age, aging parents]
+
+policies:
+  - id: SEV-001
+    name: Verified severe weather alert in effect
+    category: severe_weather
+    description: An authoritative alert source has issued an active severe-weather warning (e.g. cyclone, depression, low-pressure system) for the location.
+    severity: critical
+    priority: 100
+    conditions:
+      activities: any
+      alert:
+        min_level: warning
+    response:
+      verdict: avoid
+      summary: An official severe-weather warning is active. Avoid all non-essential outdoor activity and travel.
+      guidance:
+        - Follow instructions issued by the local meteorological and disaster-management authorities.
+        - Postpone non-essential travel and outdoor plans until the warning is lifted.
+        - Keep a charged phone and emergency contacts available.
+    metadata:
+      requires: verified alert feed
+
+  - id: HAZ-001
+    name: Thunderstorm activity forecast
+    category: weather_hazard
+    description: Thunderstorms bring lightning, sudden gusts and intense rain that endanger anyone outdoors.
+    severity: critical
+    priority: 90
+    conditions:
+      activities: any
+      all:
+        - {metric: thunderstorm, op: eq, value: true}
+    response:
+      verdict: avoid
+      summary: Thunderstorms are forecast. Do not undertake this activity outdoors during the storm window.
+      guidance:
+        - Stay indoors or inside a hard-topped vehicle while thunderstorms are active.
+        - Avoid open fields, isolated trees, water bodies and metal structures.
+        - Wait at least 30 minutes after the last thunder before resuming outdoor plans.
+
+  - id: HAZ-002
+    name: Extreme heat
+    category: weather_hazard
+    description: Very high apparent temperatures create a serious risk of heat exhaustion and heat stroke.
+    severity: critical
+    priority: 85
+    conditions:
+      activities: [cycling, running, walking, hiking, picnic, park_visit, general_outdoor]
+      all:
+        - {metric: apparent_temp_max, op: gte, value: 41}
+    response:
+      verdict: avoid
+      summary: Heat is at a dangerous level. Avoid outdoor activity during the hottest hours.
+      guidance:
+        - Avoid outdoor exertion between late morning and late afternoon.
+        - Drink water regularly even if not thirsty, and rest in shade.
+        - Stop immediately and seek cool shelter if dizzy, nauseous or confused.
+
+  - id: HAZ-003
+    name: Severe rain and wind combined
+    category: weather_hazard
+    description: Heavy rain probability coinciding with strong gusts produces storm-like conditions affecting every outdoor activity and road travel.
+    severity: high
+    priority: 80
+    conditions:
+      activities: any
+      all:
+        - {metric: precip_prob_max, op: gte, value: 70}
+        - {metric: wind_gust_max, op: gte, value: 50}
+    response:
+      verdict: avoid
+      summary: Heavy rain and strong winds are forecast together. Postpone outdoor plans and non-essential travel.
+      guidance:
+        - Postpone outdoor activities and non-essential journeys until conditions ease.
+        - If travel is unavoidable, drive slowly, keep extra distance and avoid flooded roads.
+        - Stay away from trees, hoardings and loose structures that may fall in strong wind.
+    metadata:
+      note: Data-driven storm-like conditions; this is NOT an official alert.
+
+  - id: HAZ-004
+    name: Strong winds
+    category: weather_hazard
+    description: Strong sustained winds or gusts can cause falling debris and loss of balance or control.
+    severity: high
+    priority: 70
+    conditions:
+      activities: any
+      any:
+        - {metric: wind_gust_max, op: gte, value: 60}
+        - {metric: wind_speed_max, op: gte, value: 40}
+    response:
+      verdict: avoid
+      summary: Winds are strong enough to be hazardous. Avoid exposed outdoor activity.
+      guidance:
+        - Avoid exposed areas, tall trees and temporary structures.
+        - Secure loose items and postpone activities that depend on stability or balance.
+
+  - id: HAZ-005
+    name: Freezing conditions
+    category: weather_hazard
+    description: Apparent temperatures at or below freezing risk frostbite, hypothermia and icy surfaces.
+    severity: high
+    priority: 70
+    conditions:
+      activities: any
+      all:
+        - {metric: apparent_temp_min, op: lte, value: 0}
+    response:
+      verdict: caution
+      summary: It will feel freezing. Limit exposure and dress for cold; watch for ice.
+      guidance:
+        - Wear insulated layers, gloves and head covering.
+        - Watch for icy roads and paths; reduce speed when travelling.
+        - Keep time outdoors short and warm up regularly.
+
+  - id: HAZ-006
+    name: Very high UV exposure
+    category: weather_hazard
+    description: A UV index of 8 or more can burn unprotected skin in a short time.
+    severity: moderate
+    priority: 40
+    conditions:
+      activities: [cycling, running, walking, hiking, picnic, park_visit, general_outdoor]
+      all:
+        - {metric: uv_index_max, op: gte, value: 8}
+    response:
+      verdict: caution
+      summary: UV levels are very high. The activity is possible with sun protection.
+      guidance:
+        - Use SPF 30+ sunscreen and reapply every two hours.
+        - Wear a hat and sunglasses and prefer shaded routes.
+        - Schedule outdoor time outside the midday peak where possible.
+
+  - id: TRV-001
+    name: Heavy rain during road travel
+    category: travel
+    description: High rain probability with substantial rainfall reduces visibility and road grip and can cause waterlogging.
+    severity: high
+    priority: 60
+    conditions:
+      activities: [travel]
+      all:
+        - {metric: precip_prob_max, op: gte, value: 70}
+        - {metric: precip_sum, op: gte, value: 10}
+    response:
+      verdict: not_recommended
+      summary: Heavy rain is expected. Delay non-essential road travel if you can.
+      guidance:
+        - Delay the journey or allow significant extra travel time.
+        - Avoid waterlogged underpasses and low-lying roads.
+        - Use headlights and keep a longer following distance.
+
+  - id: TRV-002
+    name: Rain likely during road travel
+    category: travel
+    description: Rain is likely during the journey, making roads slippery.
+    severity: moderate
+    priority: 50
+    conditions:
+      activities: [travel]
+      all:
+        - {metric: precip_prob_max, op: gte, value: 50}
+    response:
+      verdict: caution
+      summary: Rain is likely. Travel is possible but allow extra time and drive carefully.
+      guidance:
+        - Allow extra travel time and reduce speed on wet roads.
+        - Check your wipers, lights and tyres before setting out.
+
+  - id: CYC-001
+    name: Two-wheeler riding in rain
+    category: outdoor_exercise
+    description: Bicycles and motorised two-wheelers lose grip and visibility in rain, sharply increasing crash risk.
+    severity: high
+    priority: 65
+    conditions:
+      activities: [cycling]
+      all:
+        - {metric: precip_prob_max, op: gte, value: 60}
+    response:
+      verdict: not_recommended
+      summary: Rain is likely. Riding a bicycle or two-wheeler is not recommended; use covered transport if possible.
+      guidance:
+        - Prefer public transport, a cab or another covered mode for this trip.
+        - If you must ride, reduce speed, avoid sudden braking and wear high-visibility rain gear.
+        - Avoid riding through standing water.
+
+  - id: CYC-002
+    name: Gusty crosswinds for two-wheelers
+    category: outdoor_exercise
+    description: Gusts of 40 km/h or more can push riders off line, especially on open roads and bridges.
+    severity: high
+    priority: 66
+    conditions:
+      activities: [cycling]
+      all:
+        - {metric: wind_gust_max, op: gte, value: 40}
+    response:
+      verdict: not_recommended
+      summary: Gusty winds make riding unstable. Riding a bicycle or two-wheeler is not recommended.
+      guidance:
+        - Prefer covered transport for this trip.
+        - If you must ride, slow down on bridges and open stretches and keep both hands on the handlebar.
+
+  - id: CYC-003
+    name: Suitable conditions for riding
+    category: outdoor_exercise
+    description: Dry, calm and moderate-temperature conditions for cycling or two-wheeler riding.
+    severity: info
+    priority: 10
+    conditions:
+      activities: [cycling]
+      all:
+        - {metric: precip_prob_max, op: lt, value: 30}
+        - {metric: wind_gust_max, op: lt, value: 40}
+        - {metric: apparent_temp_max, op: lt, value: 35}
+        - {metric: apparent_temp_min, op: gt, value: 5}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: Conditions are suitable for riding.
+      guidance:
+        - Follow normal road-safety practice (helmet, lights after dark).
+        - Carry water on longer rides.
+
+  - id: EXR-001
+    name: Heat stress during exertion
+    category: outdoor_exercise
+    description: Exertion at high apparent temperatures quickly raises core body temperature.
+    severity: high
+    priority: 60
+    conditions:
+      activities: [running, cycling, hiking]
+      all:
+        - {metric: apparent_temp_max, op: gte, value: 35}
+    response:
+      verdict: caution
+      summary: It will feel hot. Exercise only in the cooler hours and reduce intensity.
+      guidance:
+        - Move the session to early morning or evening.
+        - Hydrate before, during and after exercise.
+        - Shorten the session and stop if you feel unwell.
+
+  - id: EXR-002
+    name: Suitable conditions for outdoor exercise
+    category: outdoor_exercise
+    description: Dry, calm and moderate-temperature conditions for running, walking or hiking.
+    severity: info
+    priority: 10
+    conditions:
+      activities: [running, walking, hiking]
+      all:
+        - {metric: precip_prob_max, op: lt, value: 30}
+        - {metric: wind_gust_max, op: lt, value: 45}
+        - {metric: apparent_temp_max, op: lt, value: 32}
+        - {metric: apparent_temp_min, op: gt, value: 5}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: Conditions are suitable for outdoor exercise.
+      guidance:
+        - Warm up properly and carry water.
+
+  - id: CHD-001
+    name: Children outdoors in heat or strong sun
+    category: vulnerable_groups
+    description: Children overheat and sunburn faster than adults.
+    severity: high
+    priority: 62
+    conditions:
+      activities: any
+      groups: [children]
+      any:
+        - {metric: apparent_temp_max, op: gte, value: 35}
+        - {metric: uv_index_max, op: gte, value: 8}
+    response:
+      verdict: caution
+      summary: Heat or UV is high for children. Keep the outing short and shaded, outside peak sun hours.
+      guidance:
+        - Plan the outing for early morning or late afternoon.
+        - Keep children in shade, with hats, sunscreen and frequent water breaks.
+        - Watch for signs of overheating such as flushed skin, lethargy or irritability.
+
+  - id: CHD-002
+    name: Children outdoors in mild conditions
+    category: vulnerable_groups
+    description: Mild, dry conditions are suitable for supervised outdoor play.
+    severity: low
+    priority: 20
+    conditions:
+      activities: any
+      groups: [children]
+      all:
+        - {metric: apparent_temp_max, op: lt, value: 35}
+        - {metric: apparent_temp_min, op: gt, value: 5}
+        - {metric: precip_prob_max, op: lt, value: 40}
+        - {metric: uv_index_max, op: lt, value: 8}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: Conditions are suitable for children to be outdoors with normal supervision.
+      guidance:
+        - Bring water and a light layer.
+        - Use sunscreen if the outing is in the middle of the day.
+
+  - id: ELD-001
+    name: Elderly people in temperature extremes
+    category: vulnerable_groups
+    description: Older adults regulate body temperature less effectively in heat and cold.
+    severity: high
+    priority: 62
+    conditions:
+      activities: any
+      groups: [elderly]
+      any:
+        - {metric: apparent_temp_max, op: gte, value: 33}
+        - {metric: apparent_temp_min, op: lte, value: 5}
+    response:
+      verdict: caution
+      summary: Temperatures are challenging for older adults. Keep outings short and at the most comfortable time of day.
+      guidance:
+        - Prefer the most temperate hours and avoid strenuous effort.
+        - Ensure regular fluids, appropriate clothing and a place to rest.
+        - Keep any regular medication and a phone at hand.
+
+  - id: PIC-001
+    name: Unsettled weather for a picnic
+    category: general_outdoor
+    description: Rain chances or gusty wind make leisure outings uncomfortable.
+    severity: moderate
+    priority: 45
+    conditions:
+      activities: [picnic, park_visit]
+      any:
+        - {metric: precip_prob_max, op: gte, value: 40}
+        - {metric: wind_gust_max, op: gte, value: 40}
+    response:
+      verdict: not_recommended
+      summary: The weather looks unsettled. It is not a good window for a picnic or park outing.
+      guidance:
+        - Consider another time window or an indoor alternative.
+        - If you go, choose a spot with nearby shelter.
+
+  - id: PIC-002
+    name: Pleasant weather for a picnic
+    category: general_outdoor
+    description: Dry, comfortable and calm conditions suit relaxed outdoor leisure.
+    severity: info
+    priority: 10
+    conditions:
+      activities: [picnic, park_visit]
+      all:
+        - {metric: precip_prob_max, op: lt, value: 30}
+        - {metric: wind_gust_max, op: lt, value: 40}
+        - {metric: apparent_temp_max, op: lt, value: 35}
+        - {metric: apparent_temp_min, op: gt, value: 12}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: It looks like a good window for a picnic or park visit.
+      guidance:
+        - Bring water and sun protection.
+
+  - id: GEN-001
+    name: Rain likely for outdoor activity
+    category: general_outdoor
+    description: Rain is likely during the outdoor activity.
+    severity: low
+    priority: 30
+    conditions:
+      activities: [walking, hiking, running, general_outdoor]
+      all:
+        - {metric: precip_prob_max, op: gte, value: 50}
+    response:
+      verdict: caution
+      summary: Rain is likely. The activity is possible with rain gear, or consider rescheduling.
+      guidance:
+        - Carry an umbrella or rain jacket.
+        - Watch for slippery surfaces.
+
+  - id: GEN-002
+    name: Suitable conditions for general outdoor activity
+    category: general_outdoor
+    description: Dry, comfortable conditions for going out.
+    severity: info
+    priority: 10
+    conditions:
+      activities: [general_outdoor]
+      all:
+        - {metric: precip_prob_max, op: lt, value: 30}
+        - {metric: wind_gust_max, op: lt, value: 45}
+        - {metric: apparent_temp_max, op: lt, value: 35}
+        - {metric: apparent_temp_min, op: gt, value: 5}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: Conditions are suitable for going out.
+      guidance:
+        - Carry water.
+
+  - id: TRV-003
+    name: Suitable conditions for road travel
+    category: travel
+    description: Dry and calm conditions with no weather hazards for road travel.
+    severity: info
+    priority: 10
+    conditions:
+      activities: [travel]
+      all:
+        - {metric: precip_prob_max, op: lt, value: 50}
+        - {metric: wind_gust_max, op: lt, value: 60}
+        - {metric: thunderstorm, op: eq, value: false}
+    response:
+      verdict: ok
+      summary: No weather-related travel concerns for this window.
+      guidance:
+        - Follow normal road-safety practice.
